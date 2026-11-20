@@ -190,7 +190,14 @@ finally {
 }
 
 Move-Item -LiteralPath $archiveTemp -Destination $archivePath -Force
-$hash = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToUpperInvariant()
+$sha256 = [Security.Cryptography.SHA256]::Create()
+$inputStream = [IO.File]::OpenRead($archivePath)
+try {
+    $hash = [BitConverter]::ToString($sha256.ComputeHash($inputStream)).Replace('-', '')
+} finally {
+    $inputStream.Dispose()
+    $sha256.Dispose()
+}
 [IO.File]::WriteAllText($sumsPath, "$hash  BurstParade-Windows-x64.zip`n", [Text.Encoding]::ASCII)
 
 Write-Host "Release archive: $archivePath"

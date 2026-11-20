@@ -1,0 +1,74 @@
+name: Windows build and release
+run-name: Windows x64 · ${{ github.ref_name }}
+
+on:
+  push:
+    tags: ['v[0-9]*.[0-9]*.[0-9]*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    if: github.repository == 'zenpou/burst-parade'
+    runs-on: burst-parade-unity-windows
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Build and play through the campaign
+        shell: powershell
+        run: .\ci\build-windows.ps1
+      - name: Store the tested Windows player
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-player
+          path: |
+            dist/BurstParade-Windows-x64.zip
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  release:
+    needs: windows
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: windows-player
+          path: package
+      - name: Verify and publish release assets
+        working-directory: package
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha256sum --check SHA256SUMS.txt
+          unzip -tq BurstParade-Windows-x64.zip
+          cat > "$RUNNER_TEMP/notes.md" <<'NOTES'
+          **Windows 64-bit 版**。下の `BurstParade-Windows-x64.zip` を展開し、中の `BurstParade.exe` を起動してください。
+
+          3人の操縦士と5つの放送局を巡る横スクロールSTGです。各章のライバルに勝つと、イベントCGを放送アルバムで見返せます。
+
+          矢印 / WASD で移動、射撃はオート、Space でバースト。タイトルと放送卓は Enter で進みます。
+          NOTES
+          if draft=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null); then
+            [[ "$draft" == true ]] || { echo 'This tag already has a published release.'; exit 1; }
+          else
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --draft --title "BURST PARADE $TAG" --notes-file "$RUNNER_TEMP/notes.md"
+          fi
+          gh release upload "$TAG" BurstParade-Windows-x64.zip SHA256SUMS.txt --repo "$GITHUB_REPOSITORY" --clobber
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
